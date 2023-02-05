@@ -70,33 +70,76 @@ function createAPIToken() {
 
 }
 
+# Gets the JSS_ID from the device serial then populates the device role extension attribute
+get_device_role() {
+    # Gets the JSS ID from the device serial
+    serial_url="$jamf_url/JSSResource/computers/serialnumber/${serial_number}"
+
+    # returns the JSS ID
+    get_computer_id=$(
+        /usr/bin/curl \
+            --silent \
+            --request GET \
+            --url "$serial_url" \
+            --header 'Accept: application/xml' \
+            --header "Authorization: Bearer ${api_token}" 2>/dev/null
+    )
+
+    # Returns the device ID
+    jss_id="$(echo $get_computer_id | xmllint --xpath '/computer/general/id/text()' -)"
+
+    # Returns the users building
+    user_location="$(echo $get_computer_id | xmllint --xpath '/computer/location/building/text()' -)"
+
+    # Build the URL for the extension attribute subset
+    ext_url="$jamf_url/JSSResource/computers/id/${jss_id}/subset/ExtensionAttributes"
+
+    # The 'Device Role' extension attribute is 1
+    eaID="1"
+
+    device_role=$(
+        /usr/bin/curl \
+            --silent \
+            --header 'Accept: application/xml' \
+            --header "Authorization: Bearer ${api_token}" \
+            --request GET \
+            --url "$ext_url" | xpath "//*[id=$eaID]/value/text()" 2>/dev/null
+    )
+}
+
+# Create an API token to get started with some queries
 createAPIToken
 
-# Gets the JSS ID from the device serial
-get_computer_id=$(
-    /usr/bin/curl \
-        --silent \
-        --request GET \
-        --url "$serial_url" | xmllint --xpath '/computer/general/id/text()' - \
-        --header 'Accept: application/xml' \
-        --header "Authorization: Bearer ${api_token}" 2>/dev/null
-)
+# Check if Inventory Preload exists for the device
+preload_counter=1
+while [[ $preload_counter < 10 ]]; do
 
-# Build the URL for the extension attribute subset
-ext_url="$jamf_url/JSSResource/computers/id/${get_computer_id}/subset/ExtensionAttributes"
+    # increment the counter
+    ((preload_counter += 1))
 
-# The 'Device Role' extension attributer is 1
-eaID="1"
+    preload_status=$(
+        /usr/bin/curl \
+            --header "accept: application/json" \
+            --header "Authorization: Bearer ${api_token}" \
+            --request GET \
+            --url "${jamf_url}/api/v2/inventory-preload/records?filter=serialNumber==${serial_number}" \
+            --silent | grep -ic ${serial_number}
+    )
 
-deviceRole=$(
-    /usr/bin/curl \
-        --silent \
-        --header 'Accept: application/xml' \
-        --header "Authorization: Bearer ${api_token}" \
-        --request GET \
-        --url "$ext_url" | xpath "//*[id=$EAID]/value/text()" 2>/dev/null
+    # check if inventory preload returns data
+    if [[ $preload_status -gt 0 ]]; then
+        # preload exists
+        welcomeDialog="false"
+        break
+    else
+        sleep 2
+    fi
+done
 
-)
+if [[ $preload_status -eq 0 ]]; then
+    # run the Welcome window
+    welcomeDialog="true"
+fi
 
 ####################################################################################################
 #
